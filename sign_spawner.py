@@ -3,23 +3,16 @@ from qvl.stop_sign import QLabsStopSign
 from qvl.traffic_light import QLabsTrafficLight
 
 def spawn_signs(qlabs_instance):
-    """
-    Spawns a stop sign and a traffic light in the QLabs environment.
 
-    Args:
-        qlabs_instance (QLabs): The QLabs instance.
-    """
     stop_sign = QLabsStopSign(qlabs_instance)
     traffic_light = QLabsTrafficLight(qlabs_instance)
 
-    # Define spawn locations, rotations, and scales for the stop sign and traffic light
-    # These coordinates are specific to your QLabs environment setup
-    stop_sign_location = [14.833, -12.992, 0.2]
-    stop_sign_rotation = [0.0, 0.0, 3.132]
+    stop_sign_location = [-2.038, -3.421, 0.2]
+    stop_sign_rotation = [0.0, 0.0, 1.535]
     stop_sign_scale = [1.0, 1.0, 1.0]
     stop_sign_configuration = 0 # Default configuration
 
-    traffic_light_location = [12.0, 7.0, 0.0]
+    traffic_light_location = [7.313, 5.868, 0.215]
     traffic_light_rotation = [0.0, 0.0, 4.712]
     traffic_light_scale = [1.0, 1.0, 1.0]
     traffic_light_configuration = 0 # Default configuration
@@ -34,4 +27,3 @@ def spawn_signs(qlabs_instance):
         print("Traffic light spawned successfully.")
     except Exception as e:
         print(f"Failed to spawn signs: {e}. They might already exist or there's a connection issue with QLabs.")
-
