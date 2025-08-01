@@ -7,9 +7,7 @@ import threading
 from qvl.qlabs import QuanserInteractiveLabs as QLabs
 from qvl.qcar import QLabsQCar
 
-# Import the new LaneNet-based follower class
 from lanenet_follower import LaneNetLaneFollower
-# Import other utility files. Note: yolo_detector and sign_spawner are assumed to exist.
 from yolo_detector import YOLODetector
 from sign_spawner import spawn_signs
 
@@ -19,7 +17,6 @@ qcar_lock = threading.Lock()
 latest_yolo_image = None
 
 def update_traffic_signal(signal):
-    """Callback function to update the global traffic signal state."""
     global current_traffic_signal
     current_traffic_signal = signal
 
@@ -29,7 +26,6 @@ def receive_yolo_image(image):
     latest_yolo_image = image
 
 def main():
-    """Main function to run the QLabs car simulation with LaneNet-based lane following."""
     qlabs = QLabs()
     try:
         qlabs.open("localhost")
@@ -143,7 +139,7 @@ def main():
 
     finally:
         print("Closing QLabs connection and cleaning up...")
-        yolo_detector.stop() # Ensure the YOLO thread is gracefully stopped
+        yolo_detector.stop()
         qlabs.close()
         cv2.destroyAllWindows()
 
