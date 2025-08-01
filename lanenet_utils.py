@@ -1,138 +1,100 @@
-# lanenet_utils.py
 import numpy as np
 import cv2
 import torch
-from pit.LaneNet.nets import LaneNet
 
-class LaneNetUtils:
-    """
-    Encapsulates LaneNet model and associated lane-finding utilities.
-    """
-    def __init__(self, lanenet_processing_width=640, lanenet_processing_height=480):
-        self.LANENET_PROCESSING_WIDTH = lanenet_processing_width
-        self.LANENET_PROCESSING_HEIGHT = lanenet_processing_height
-        self.lanenet = LaneNet(imageHeight=self.LANENET_PROCESSING_HEIGHT, imageWidth=self.LANENET_PROCESSING_WIDTH)
-        self.imgTensor = None # To store the pre-processed image tensor for visualization
+class LaneNetLaneFollower:
+    def __init__(self, width=640, height=480, row_upper_bound=228):
+        self.width = width
+        self.height = height
+        self.row_upper_bound = row_upper_bound
+        from pit.LaneNet.nets import LaneNet
+        self.lanenet = LaneNet(imageHeight=height, imageWidth=width, rowUpperBound=row_upper_bound)
+        self.prev_lane_x = None
+        self.max_jump = 50  # max allowed pixel jump between frames for lane center smoothing
+        self.steering_history = []
+        self.history_size = 5
 
-    def find_lane_pixels(self, binary_warped, nwindows=10, margin=25, minpix=250):
-        """
-        Finds lane pixels using a sliding window approach on a binary warped image.
-        Adapted from common lane-finding tutorials (e.g., Udacity Self-Driving Car Nanodegree).
-        """
-        histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
-        midpoint = np.int64(histogram.shape[0]//2)
-        leftx_base = np.argmax(histogram[:midpoint])
-        rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+    def compute_steering(self, image_rgb, current_speed):
+        cropped = image_rgb[self.row_upper_bound:, :, :]
+        resized = cv2.resize(cropped, (512, 256), interpolation=cv2.INTER_LINEAR)
 
-        window_height = np.int64(binary_warped.shape[0]//nwindows)
-        nonzero = binary_warped.nonzero()
-        nonzeroy = np.array(nonzero[0])
-        nonzerox = np.array(nonzero[1])
+        input_img = resized.astype(np.float32) / 255.0
+        input_tensor = torch.from_numpy(input_img).permute(2, 0, 1).unsqueeze(0).to(torch.float32)
 
-        leftx_current = leftx_base
-        rightx_current = rightx_base
+        binary_mask, instance_mask = self.lanenet.predict(input_tensor)
 
-        left_lane_inds = []
-        right_lane_inds = []
+        annotated_image = image_rgb.copy()
+        orig_height, orig_width = image_rgb.shape[:2]
 
-        for window in range(nwindows):
-            win_y_low = binary_warped.shape[0] - (window+1)*window_height
-            win_y_high = binary_warped.shape[0] - window*window_height
-            win_xleft_low = leftx_current - margin
-            win_xleft_high = leftx_current + margin
-            win_xright_low = rightx_current - margin
-            win_xright_high = rightx_current + margin
-
-            good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) &
-                              (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
-            good_right_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) &
-                               (nonzerox >= win_xright_low) & (nonzerox < win_xright_high)).nonzero()[0]
-
-            left_lane_inds.append(good_left_inds)
-            right_lane_inds.append(good_right_inds)
-
-            if len(good_left_inds) > minpix:
-                leftx_current = np.int64(np.mean(nonzerox[good_left_inds]))
-            if len(good_right_inds) > minpix:
-                rightx_current = np.int64(np.mean(nonzerox[good_right_inds]))
-
-        try:
-            left_lane_inds = np.concatenate(left_lane_inds)
-            right_lane_inds = np.concatenate(right_lane_inds)
-        except ValueError:
-            pass
-
-        leftx = nonzerox[left_lane_inds]
-        lefty = nonzeroy[left_lane_inds]
-        rightx = nonzerox[right_lane_inds]
-        righty = nonzeroy[right_lane_inds]
-
-        return leftx, lefty, rightx, righty, left_lane_inds, right_lane_inds
-
-    def compute_steering(self, binary_mask, current_speed):
-        """
-        Computes the steering angle based on the binary lane mask and current speed.
-        """
-        height, width = binary_mask.shape
-        midline = width // 2
-
-        leftx, lefty, rightx, righty, left_lane_inds, right_lane_inds = \
-            self.find_lane_pixels(binary_mask)
-
-        left_fit = None
-        right_fit = None
-
-        min_poly_points = 100
-        if len(leftx) > min_poly_points and len(lefty) > min_poly_points:
-            left_fit = np.polyfit(lefty, leftx, 1)
-        if len(rightx) > min_poly_points and len(righty) > min_poly_points:
-            right_fit = np.polyfit(righty, rightx, 1)
-
-        MIN_LOOK_AHEAD_Y_RATIO = 0.6
-        MAX_LOOK_AHEAD_Y_RATIO = 0.9
-        MAX_FORWARD_SPEED = 3.0
-
-        clipped_speed = np.clip(current_speed, 0, MAX_FORWARD_SPEED)
-        look_ahead_y_ratio = MIN_LOOK_AHEAD_Y_RATIO + \
-                             (MAX_LOOK_AHEAD_Y_RATIO - MIN_LOOK_AHEAD_Y_RATIO) * \
-                             (clipped_speed / MAX_FORWARD_SPEED)
-        look_ahead_y_pixel = int(height * look_ahead_y_ratio)
-        look_ahead_y_pixel = np.clip(look_ahead_y_pixel, 0, height - 1)
-
-        lane_center = float(midline)
-        error = 0.0
-
-        ESTIMATED_HALF_ROAD_WIDTH_PX = 175
-
-        if left_fit is not None and right_fit is not None:
-            left_x_at_y = left_fit[0]*look_ahead_y_pixel + left_fit[1]
-            right_x_at_y = right_fit[0]*look_ahead_y_pixel + right_fit[1]
-            lane_center = (left_x_at_y + right_x_at_y) / 2
-            error = lane_center - midline
-        elif left_fit is not None:
-            left_x_at_y = left_fit[0]*look_ahead_y_pixel + left_fit[1]
-            lane_center = left_x_at_y + ESTIMATED_HALF_ROAD_WIDTH_PX
-            error = lane_center - midline
-            print(f"DEBUG: Only left lane. Estimated Center: {lane_center:.2f}")
-        elif right_fit is not None:
-            right_x_at_y = right_fit[0]*look_ahead_y_pixel + right_fit[1]
-            lane_center = right_x_at_y - ESTIMATED_HALF_ROAD_WIDTH_PX
-            error = lane_center - midline
-            print(f"DEBUG: Only right lane. Estimated Center: {lane_center:.2f}")
+        lane_points = np.where(binary_mask > 128)
+        if len(lane_points[1]) == 0:
+            error = 0.0
+            steering = 0.0
+            lane_x = None
         else:
-            print("Warning: No polynomial lanes detected. Defaulting to midline (no steering).")
+            # Focus on bottom quarter of the image
+            bottom_y_threshold = 256 - (256 // 4)  # bottom 25% rows in resized mask
+            mask_bottom_indices = lane_points[0] >= bottom_y_threshold
+            
+            lane_xs_bottom = lane_points[1][mask_bottom_indices]
+            lane_ys_bottom = lane_points[0][mask_bottom_indices]
 
-        k_p = 2
-        steering = k_p * error
-        return np.clip(steering, -30, 30), error, lane_center, look_ahead_y_pixel, left_fit, right_fit, left_lane_inds, right_lane_inds
+            if len(lane_xs_bottom) == 0:
+                # If no lane pixels near bottom, fallback to all pixels
+                lane_xs_to_use = lane_points[1]
+            else:
+                lane_xs_to_use = lane_xs_bottom
 
-    def process_image_for_lanenet(self, image_rgb):
-        """
-        Resizes the input image and processes it through LaneNet.
-        Stores the pre-processed image tensor for visualization.
-        """
-        image_resized = cv2.resize(image_rgb, (self.LANENET_PROCESSING_WIDTH, self.LANENET_PROCESSING_HEIGHT))
-        input_tensor = self.lanenet.pre_process(image_resized).unsqueeze(0)
-        self.imgTensor = self.lanenet.pre_process(image_resized) # Store for visualization
-        final_binary_mask, _ = self.lanenet.predict(input_tensor)
-        return final_binary_mask
+            # Define horizontal ROI around previous lane_x or center
+            if self.prev_lane_x is None:
+                center_roi_x = 512 // 2
+            else:
+                center_roi_x = self.prev_lane_x
+
+            roi_width = 100  # pixels to each side from center
+            left_bound = max(center_roi_x - roi_width, 0)
+            right_bound = min(center_roi_x + roi_width, 511)
+
+            # Filter lane_x pixels within horizontal ROI
+            valid_indices = np.where((lane_xs_to_use >= left_bound) & (lane_xs_to_use <= right_bound))[0]
+            if len(valid_indices) == 0:
+                # No pixels in ROI, fallback to center ROI ignoring lane_xs_to_use
+                lane_xs_in_roi = lane_xs_to_use
+            else:
+                lane_xs_in_roi = lane_xs_to_use[valid_indices]
+
+            lane_x = int(np.mean(lane_xs_in_roi))
+
+            # Smooth sudden jumps
+            if self.prev_lane_x is not None and abs(lane_x - self.prev_lane_x) > self.max_jump:
+                lane_x = self.prev_lane_x
+            self.prev_lane_x = lane_x
+
+            lane_x_scaled = int(lane_x * (orig_width / 512))
+            center_x = orig_width // 2
+            error = lane_x_scaled - center_x
+
+            gain = 0.005
+            steering = np.clip(-gain * error, -30, 30)
+
+            self.steering_history.append(steering)
+            if len(self.steering_history) > self.history_size:
+                self.steering_history.pop(0)
+            steering = np.mean(self.steering_history)
+
+            # Draw center line and lane center as before...
+            cv2.line(annotated_image, (center_x, 0), (center_x, orig_height), (0, 255, 0), 2)
+            cv2.circle(annotated_image, (lane_x_scaled, orig_height - 30), 10, (0, 0, 255), -1)
+
+            binary_mask_color = cv2.cvtColor(binary_mask, cv2.COLOR_GRAY2BGR)
+            binary_mask_resized = cv2.resize(binary_mask_color, (orig_width, orig_height - self.row_upper_bound), interpolation=cv2.INTER_NEAREST)
+            overlay = annotated_image[self.row_upper_bound:, :, :].copy()
+            cv2.addWeighted(binary_mask_resized, 0.4, overlay, 0.6, 0, overlay)
+            annotated_image[self.row_upper_bound:, :, :] = overlay
+
+            cv2.putText(annotated_image, f"Error: {error:.2f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(annotated_image, f"Steering: {steering:.2f}", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        return steering, error, lane_x, annotated_image
