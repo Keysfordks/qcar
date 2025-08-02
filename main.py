@@ -15,6 +15,9 @@ from sign_spawner import spawn_signs
 current_traffic_signal = "GO"
 qcar_lock = threading.Lock()
 latest_yolo_image = None
+base_forward_speed = 1.0 # meters/second
+current_forward_speed = base_forward_speed
+global was_stopped, stop_timer, stop_hold_time
 
 def update_traffic_signal(signal):
     global current_traffic_signal
