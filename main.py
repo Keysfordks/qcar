@@ -99,9 +99,17 @@ def main():
 
             # Adjust speed based on traffic signals from YOLO detector
             if current_traffic_signal == "STOP":
-                mod_speed = 0.0
-            elif current_traffic_signal == "SLOW":
-                mod_speed *= 0.3
+                if not was_stopped:
+                    stop_timer = time.time()
+                    was_stopped = True
+                if time.time() - stop_timer < stop_hold_time:
+                    modulated_forward_speed = 0.0
+                    print("--- STOP SIGN DETECTED: CAR STOPPED ---")
+                else:
+                    # After holding, treat as GO (or you can wait for signal to change)
+                    modulated_forward_speed = base_forward_speed * np.cos(np.deg2rad(filtered_steering_angle))
+                    modulated_forward_speed = np.clip(modulated_forward_speed, 0, base_forward_speed)
+                    print("--- STOP HOLD COMPLETE: CAR RESUMING ---")
 
             # Send the velocity and steering commands to the QCar
             with qcar_lock:
